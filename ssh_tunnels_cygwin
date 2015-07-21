@@ -1,0 +1,19 @@
+Host host1
+HostName host2
+User pslawek
+
+
+Host name hostname/ip
+        Hostname name/ip
+        ProxyCommand ssh -q -A -x host -W %h:22
+
+Host name 10.204.98.105
+        User admin
+        Hostname ip
+        ProxyCommand ssh -q -A -x host2 -W %h:22
+
+
+
+
+
+
