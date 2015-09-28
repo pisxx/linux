@@ -1,8 +1,6 @@
-set shiftwidth=4
+syntax on
+set smartindent
 set tabstop=4
-set softtabstop=4
-set smarttab
-
+set shiftwidth=4
+set expandtab
 colorscheme ron
-
-
