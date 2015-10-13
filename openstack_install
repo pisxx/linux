@@ -1,0 +1,1059 @@
+--- Nody
+
+Control-node						Network-node					Compute-node
+MGMT - 10.0.0.11					MGMT - 10.0.0.21				MGMT - 10.0.0.31
+Internal - 10.0.1.11				Internal - 10.0.1.21			Internal - 10.0.1.31
+Public - 10.0.0..11					Public - 10.0.2.21				Public - 10.0.2.31
+
+
+------------ SETUP UP
+
+
+------------- DATABASE 
+----------- CONTROLLER
+
+yum install mysql mysql-server MySQL-python
+
+[mysqld]
+...
+bind-address = 10.0.0.11
+
+[mysqld]
+...
+default-storage-engine = innodb
+innodb_file_per_table
+collation-server = utf8_general_ci
+init-connect = 'SET NAMES utf8'
+character-set-server = utf8
+
+service mysqld start
+chkconfig mysqld on
+
+
+mysql_install_db
+mysql_secure_installation
+
+
+
+
+---- COMPUTE
+
+yum install MySQL-python
+
+
+----- ALL
+
+yum install yum-plugin-priorities
+
+yum install http://repos.fedorapeople.org/repos/openstack/openstackicehouse/rdo-release-icehouse-4-.noarch.rpm
+
+yum install http://dl.fedoraproject.org/pub/epel/6/x86_64/epel-release-6-8.noarch.rpm
+
+yum install openstack-utils
+
+
+yum install openstack-selinux
+
+yum upgrade
+
+
+reboot
+
+------- MESSEGING server
+Rabbit, qpidd
+
+
+yum install rabbitmq-server.noarch
+
+service rabbitmq-server start
+chkconfig rabbitmq-server on
+
+
+------------ KEYSTONE
+---- CONTROLLER
+
+
+yum install openstack-keystone python-keystoneclient
+
+openstack-config --set /etc/keystone/keystone.conf database connection mysql://keystone:rac123@localhost/keystone
+
+openstack-config --set /etc/keystone/keystone.conf DEFAULT admin_token $ADMIN_TOKEN
+
+
+keystone-manage pki_setup --keystone-user keystone --keystone-group keystone
+chown -R keystone:keystone /etc/keystone/ssl
+chmod -R o-rwx /etc/keystone/ssl
+
+
+service openstack-keystone start
+chkconfig openstack-keystone on
+
+
+ADMIN_TOKEN=$(openssl rand -hex 10)
+echo $ADMIN_TOKEN
+export OS_SERVICE_TOKEN=ADMIN_TOKEN
+export OS_SERVICE_ENDPOINT=http://controller:35357/v2.0
+
+Create the admin user:
+keystone user-create --name=admin --pass=rac123 --email=admin@controller
+keystone role-create --name=admin
+keystone tenant-create --name=admin --description="Admin Tenant"
+keystone user-role-add --user=admin --tenant=admin --role=admin
+keystone user-role-add --user=admin --role=_member_ --tenant=admin
+
+
+--------------- TEST
+unset OS_SERVICE_TOKEN OS_SERVICE_ENDPOINT
+
+keystone --os-username=admin --os-password=rac123 --os-auth-url=http://controller:35357/v2.0 token-get
+keystone --os-username=admin --os-password=rac123 --os-tenant-name=admin --os-auth-url=http://controller:35357/v2.0 token-get
+
+
+keystone --os-username=admin --os-password=rac123 --os-tenant-name=neutron --os-auth-url=http://controller:35357/v2.0 token-get
+
+-------- ADMIN Creds file
+export OS_USERNAME=admin
+export OS_PASSWORD=rac123
+export OS_TENANT_NAME=admin
+export OS_AUTH_URL=http://controller:35357/v2.0
+
+keystone user-create --name=demo --pass=rac123 --email=demo@controller
+keystone tenant-create --name=demo --description="Demo Tenant"
+keystone user-role-add --user=demo --role=_member_ --tenant=demo
+
+keystone tenant-create --name=service --description="Service Tenant"
+
+keystone service-create --name=keystone --type=identity --description="OpenStack Identity"
+keystone endpoint-create \
+--service-id=$(keystone service-list | awk '/ identity / {print $2}') \
+--publicurl=http://controller:5000/v2.0 \
+--internalurl=http://controller:5000/v2.0 \
+--adminurl=http://controller:35357/v2.0
+
+
+
+----------- Glance
+----------- CONTROLLER
+
+yum install openstack-glance python-glanceclient
+
+
+openstack-config --set /etc/glance/glance-api.conf database connection mysql://glance:rac123@localhost/glance
+openstack-config --set /etc/glance/glance-registry.conf database connection mysql://glance:rac123@localhost/glance
+
+
+
+
+
+mysql -u root -p
+CREATE DATABASE glance;
+GRANT ALL PRIVILEGES ON glance.* TO 'glance'@'localhost' IDENTIFIED BY 'rac123';
+GRANT ALL PRIVILEGES ON glance.* TO 'glance'@'%' IDENTIFIED BY 'rac123';
+
+su -s /bin/sh -c "glance-manage db_sync" glance
+
+
+keystone user-create --name=glance --pass=rac123 --email=glance@controller
+keystone user-role-add --user=glance --tenant=service --role=admin
+
+
+keystone service-create --name=glance --type=image --description="OpenStack Image Service"
+keystone endpoint-create \
+--service-id=$(keystone service-list | awk '/ image / {print $2}') \
+--publicurl=http://controller:9292 \
+--internalurl=http://controller:9292 \
+--adminurl=http://controller:9292
+
+
+openstack-config --set /etc/glance/glance-api.conf keystone_authtoken auth_uri http://controller:5000
+openstack-config --set /etc/glance/glance-api.conf keystone_authtoken auth_host controller
+openstack-config --set /etc/glance/glance-api.conf keystone_authtoken auth_port 35357
+openstack-config --set /etc/glance/glance-api.conf keystone_authtoken auth_protocol http
+openstack-config --set /etc/glance/glance-api.conf keystone_authtoken admin_tenant_name service
+openstack-config --set /etc/glance/glance-api.conf keystone_authtoken admin_user glance
+openstack-config --set /etc/glance/glance-api.conf keystone_authtoken admin_password rac123
+openstack-config --set /etc/glance/glance-api.conf paste_deploy flavor keystone
+openstack-config --set /etc/glance/glance-registry.conf keystone_authtoken auth_uri http://controller:5000
+openstack-config --set /etc/glance/glance-registry.conf keystone_authtoken auth_host controller
+openstack-config --set /etc/glance/glance-registry.conf keystone_authtoken auth_port 35357
+openstack-config --set /etc/glance/glance-registry.conf keystone_authtoken auth_protocol http
+openstack-config --set /etc/glance/glance-registry.conf keystone_authtoken admin_tenant_name service
+openstack-config --set /etc/glance/glance-registry.conf keystone_authtoken admin_user glance
+openstack-config --set /etc/glance/glance-registry.conf keystone_authtoken admin_password rac123
+openstack-config --set /etc/glance/glance-registry.conf paste_deploy flavor keystone
+
+
+
+
+service openstack-glance-api start
+service openstack-glance-registry start
+chkconfig openstack-glance-api on
+chkconfig openstack-glance-registry on
+
+
+service openstack-glance-api restart
+service openstack-glance-registry restart
+
+mkdir /tmp/images
+cd /tmp/images/
+wget http://download.cirros-cloud.net/0.3.2/cirros-0.3.2-x86_64-disk.img
+
+
+glance image-create --name "cirros-0.3.2-x86_64" --disk-format qcow2 --container-format bare --is-public True --progress < cirros-0.3.2-x86_64-disk.img
+
+
+source admin-openrc.sh
+glance image-create --name="cirros-0.3.2-x86_64" --disk-format=qcow2 --container-format=bare --is-public=true --copy-from http://cdn.download.cirros-cloud.net/0.3.2/cirros-0.3.2-x86_64-disk.img
+
+
+---------------- NOVA
+-------------- CONTROLLER
+
+yum install openstack-nova-api openstack-nova-cert openstack-nova-conductor openstack-nova-console openstack-nova-novncproxy openstack-nova-scheduler python-novaclient -y 
+
+openstack-config --set /etc/nova/nova.conf database connection mysql://nova:rac123@localhost/nova
+
+openstack-config --set /etc/nova/nova.conf DEFAULT rpc_backend rabbit
+openstack-config --set /etc/nova/nova.conf DEFAULT rabbit_host controller
+openstack-config --set /etc/nova/nova.conf DEFAULT my_ip 10.0.0.11
+openstack-config --set /etc/nova/nova.conf DEFAULT vncserver_listen 10.0.0.11
+openstack-config --set /etc/nova/nova.conf DEFAULT vncserver_proxyclient_address 10.0.0.11
+
+mysql -u root -p
+CREATE DATABASE nova;
+GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'localhost' IDENTIFIED BY 'rac123';
+GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'%' IDENTIFIED BY 'rac123';
+exit;
+
+su -s /bin/sh -c "nova-manage db sync" nova
+
+
+keystone user-create --name=nova --pass=rac123 --email=nova@controller
+keystone user-role-add --user=nova --tenant=service --role=admin
+
+
+
+
+openstack-config --set /etc/nova/nova.conf DEFAULT auth_strategy keystone
+openstack-config --set /etc/nova/nova.conf keystone_authtoken auth_uri http://controller:5000
+openstack-config --set /etc/nova/nova.conf keystone_authtoken auth_host controller
+openstack-config --set /etc/nova/nova.conf keystone_authtoken auth_protocol http
+openstack-config --set /etc/nova/nova.conf keystone_authtoken auth_port 35357
+openstack-config --set /etc/nova/nova.conf keystone_authtoken admin_user nova
+openstack-config --set /etc/nova/nova.conf keystone_authtoken admin_tenant_name service
+openstack-config --set /etc/nova/nova.conf keystone_authtoken admin_password rac123
+
+
+
+
+
+
+keystone service-create --name=nova --type=compute --description="OpenStack Compute"
+keystone endpoint-create \
+--service-id=$(keystone service-list | awk '/ compute / {print $2}') \
+--publicurl=http://controller:8774/v2/%\(tenant_id\)s \
+--internalurl=http://controller:8774/v2/%\(tenant_id\)s \
+--adminurl=http://controller:8774/v2/%\(tenant_id\)s
+
+
+service openstack-nova-api start
+service openstack-nova-cert start
+service openstack-nova-consoleauth start
+service openstack-nova-scheduler start
+service openstack-nova-conductor start
+service openstack-nova-novncproxy start
+chkconfig openstack-nova-api on
+chkconfig openstack-nova-cert on
+chkconfig openstack-nova-consoleauth on
+chkconfig openstack-nova-scheduler on
+chkconfig openstack-nova-conductor on
+chkconfig openstack-nova-novncproxy on
+
+
+service openstack-nova-api restart
+service openstack-nova-cert restart
+service openstack-nova-consoleauth restart
+service openstack-nova-scheduler restart
+service openstack-nova-conductor restart
+service openstack-nova-novncproxy restart
+
+
+service openstack-nova-api stop
+service openstack-nova-cert stop
+service openstack-nova-consoleauth stop
+service openstack-nova-scheduler stop
+service openstack-nova-conductor stop
+service openstack-nova-novncproxy stop
+
+
+
+
+------------------- Compute node
+yum install openstack-nova-compute
+
+openstack-config --set /etc/nova/nova.conf database connection mysql://nova:rac123@controller/nova
+openstack-config --set /etc/nova/nova.conf DEFAULT auth_strategy keystone
+openstack-config --set /etc/nova/nova.conf keystone_authtoken auth_uri http://controller:5000
+openstack-config --set /etc/nova/nova.conf keystone_authtoken auth_host controller
+openstack-config --set /etc/nova/nova.conf keystone_authtoken auth_protocol http
+openstack-config --set /etc/nova/nova.conf keystone_authtoken auth_port 35357
+openstack-config --set /etc/nova/nova.conf keystone_authtoken admin_user nova
+openstack-config --set /etc/nova/nova.conf keystone_authtoken admin_tenant_name service
+openstack-config --set /etc/nova/nova.conf keystone_authtoken admin_password rac123
+
+
+openstack-config --set /etc/nova/nova.conf DEFAULT rpc_backend rabbit
+openstack-config --set /etc/nova/nova.conf DEFAULT rabbit_host controller
+
+
+openstack-config --set /etc/nova/nova.conf DEFAULT my_ip 10.0.0.31
+openstack-config --set /etc/nova/nova.conf DEFAULT vnc_enabled True
+openstack-config --set /etc/nova/nova.conf DEFAULT vncserver_listen 0.0.0.0
+openstack-config --set /etc/nova/nova.conf DEFAULT vncserver_proxyclient_address 10.0.0.31
+openstack-config --set /etc/nova/nova.conf DEFAULT novncproxy_base_url http://controller:6080/vnc_auto.html
+
+
+openstack-config --set /etc/nova/nova.conf DEFAULT glance_host controller
+
+
+
+egrep -c '(vmx|svm)' /proc/cpuinfo if 0 
+
+Then
+openstack-config --set /etc/nova/nova.conf libvirt virt_type qemu 
+
+else
+
+service libvirtd start
+service messagebus start
+service openstack-nova-compute start
+
+
+chkconfig libvirtd on
+chkconfig messagebus on
+chkconfig openstack-nova-compute on
+
+
+
+
+------------------- 
+Neutron
+
+control-node 
+
+mysql -u root -p
+CREATE DATABASE neutron;
+GRANT ALL PRIVILEGES ON neutron.* TO 'neutron'@'localhost' IDENTIFIED BY 'rac123';
+GRANT ALL PRIVILEGES ON neutron.* TO 'neutron'@'%' IDENTIFIED BY 'rac123';
+exit;
+
+
+
+keystone user-create --name neutron --pass rac123 --email neutron@controller
+
+keystone user-role-add --user neutron --tenant service --role admin
+
+keystone service-create --name neutron --type network --description "OpenStack Networking"
+
+keystone endpoint-create \
+--service-id $(keystone service-list | awk '/ network / {print $2}') \
+--publicurl http://controller:9696 \
+--adminurl http://controller:9696 \
+--internalurl http://controller:9696
+
+yum install openstack-neutron openstack-neutron-ml2 python-neutronclient -y 
+
+openstack-config --set /etc/neutron/neutron.conf database connection mysql://neutron:rac123@localhost/neutron
+
+
+openstack-config --set /etc/neutron/neutron.conf DEFAULT auth_strategy keystone
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken auth_uri http://controller:5000
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken auth_host controller
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken auth_protocol http
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken auth_port 35357
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken admin_tenant_name service
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken admin_user neutron
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken admin_password rac123
+
+
+openstack-config --set /etc/neutron/neutron.conf DEFAULT rpc_backend neutron.openstack.common.rpc.impl_kombu
+openstack-config --set /etc/neutron/neutron.conf DEFAULT rabbit_host controller
+
+openstack-config --set /etc/neutron/neutron.conf DEFAULT notify_nova_on_port_status_changes True
+openstack-config --set /etc/neutron/neutron.conf DEFAULT notify_nova_on_port_data_changes True
+openstack-config --set /etc/neutron/neutron.conf DEFAULT nova_url http://controller:8774/v2
+openstack-config --set /etc/neutron/neutron.conf DEFAULT nova_admin_username nova
+openstack-config --set /etc/neutron/neutron.conf DEFAULT nova_admin_tenant_id $(keystone tenant-list | awk '/ service / { print $2 }')
+openstack-config --set /etc/neutron/neutron.conf DEFAULT nova_admin_password rac123
+openstack-config --set /etc/neutron/neutron.conf DEFAULT nova_admin_auth_url http://controller:35357/v2.0
+
+
+openstack-config --set /etc/neutron/neutron.conf DEFAULT core_plugin ml2
+openstack-config --set /etc/neutron/neutron.conf DEFAULT service_plugins router
+
+
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ml2 type_drivers gre
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ml2 tenant_network_types gre
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ml2 mechanism_drivers openvswitch
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ml2_type_gre tunnel_id_ranges 1:1000
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini securitygroup firewall_driver neutron.agent.linux.iptables_firewall.OVSHybridIptablesFirewallDriver
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini securitygroup enable_security_group True
+
+
+openstack-config --set /etc/nova/nova.conf DEFAULT network_api_class nova.network.neutronv2.api.API
+openstack-config --set /etc/nova/nova.conf DEFAULT neutron_url http://controller:9696
+openstack-config --set /etc/nova/nova.conf DEFAULT neutron_auth_strategy keystone
+openstack-config --set /etc/nova/nova.conf DEFAULT neutron_admin_tenant_name service
+openstack-config --set /etc/nova/nova.conf DEFAULT neutron_admin_username neutron
+openstack-config --set /etc/nova/nova.conf DEFAULT neutron_admin_password rac123
+openstack-config --set /etc/nova/nova.conf DEFAULT neutron_admin_auth_url http://controller:35357/v2.0
+openstack-config --set /etc/nova/nova.conf DEFAULT linuxnet_interface_driver nova.network.linux_net.LinuxOVSInterfaceDriver
+openstack-config --set /etc/nova/nova.conf DEFAULT firewall_driver nova.virt.firewall.NoopFirewallDriver
+openstack-config --set /etc/nova/nova.conf DEFAULT security_group_api neutron
+
+
+
+ln -s plugins/ml2/ml2_conf.ini /etc/neutron/plugin.ini
+
+
+service openstack-nova-api restart
+service openstack-nova-scheduler restart
+service openstack-nova-conductor restart
+service openstack-nova-cert restart
+
+service neutron-server start
+chkconfig neutron-server on
+
+
+
+
+openstack-config --set /etc/neutron/neutron.conf DEFAULT core_plugin neutron.plugins.ml2.plugin.Ml2Plugin
+openstack-config --set /etc/neutron/neutron.conf DEFAULT service_plugins neutron.services.l3_router.l3_router_plugin.L3RouterPlugin
+
+su -s /bin/sh -c "neutron-db-manage --config-file /etc/neutron/neutron.conf --config-file /etc/neutron/plugin.ini upgrade head" neutron
+
+------------------
+Network-node
+
+modprobe bridge
+
+
+Edit /etc/sysctl.conf to contain the following:
+net.ipv4.ip_forward = 1 
+net.ipv4.conf.all.rp_filter = 0 
+net.ipv4.conf.default.rp_filter = 0 
+net.bridge.bridge-nf-call-arptables = 1 
+net.bridge.bridge-nf-call-iptables = 1 
+net.bridge.bridge-nf-call-ip6tables = 1 
+ 
+
+
+yum install openstack-neutron openstack-neutron-ml2 openstack-neutron-openvswitch -y 
+
+
+
+openstack-config --set /etc/neutron/neutron.conf DEFAULT auth_strategy keystone
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken auth_uri http://controller:5000
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken auth_host controller
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken auth_protocol http
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken auth_port 35357
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken admin_tenant_name service
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken admin_user neutron
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken admin_password rac123
+
+
+
+openstack-config --set /etc/neutron/neutron.conf DEFAULT rpc_backend neutron.openstack.common.rpc.impl_kombu
+openstack-config --set /etc/neutron/neutron.conf DEFAULT rabbit_host controller
+
+
+openstack-config --set /etc/neutron/neutron.conf DEFAULT core_plugin ml2
+openstack-config --set /etc/neutron/neutron.conf DEFAULT service_plugins router
+
+
+openstack-config --set /etc/neutron/l3_agent.ini DEFAULT interface_driver neutron.agent.linux.interface.OVSInterfaceDriver
+openstack-config --set /etc/neutron/l3_agent.ini DEFAULT use_namespaces True
+
+
+openstack-config --set /etc/neutron/dhcp_agent.ini DEFAULT interface_driver neutron.agent.linux.interface.OVSInterfaceDriver
+openstack-config --set /etc/neutron/dhcp_agent.ini DEFAULT dhcp_driver neutron.agent.linux.dhcp.Dnsmasq
+openstack-config --set /etc/neutron/dhcp_agent.ini DEFAULT use_namespaces True
+
+
+openstack-config --set /etc/neutron/dhcp_agent.ini DEFAULT dnsmasq_config_file /etc/neutron/dnsmasq-neutron.conf
+
+Create and edit the /etc/neutron/dnsmasq-neutron.conf file and add the
+following keys:
+dhcp-option-force=26,1454
+
+echo "dhcp-option-force=26,1454" >> /etc/neutron/dnsmasq-neutron.conf 
+
+killall dnsmasq
+
+openstack-config --set /etc/neutron/metadata_agent.ini DEFAULT auth_url http://controller:5000/v2.0
+openstack-config --set /etc/neutron/metadata_agent.ini DEFAULT auth_region regionOne
+openstack-config --set /etc/neutron/metadata_agent.ini DEFAULT admin_tenant_name service
+openstack-config --set /etc/neutron/metadata_agent.ini DEFAULT admin_user neutron
+openstack-config --set /etc/neutron/metadata_agent.ini DEFAULT admin_password rac123
+openstack-config --set /etc/neutron/metadata_agent.ini DEFAULT nova_metadata_ip controller
+openstack-config --set /etc/neutron/metadata_agent.ini DEFAULT metadata_proxy_shared_secret rac123
+
+------------
+Control-node
+
+
+openstack-config --set /etc/nova/nova.conf DEFAULT service_neutron_metadata_proxy true
+openstack-config --set /etc/nova/nova.conf DEFAULT neutron_metadata_proxy_shared_secret rac123
+
+
+service openstack-nova-api restart
+
+----------- 
+Network-node
+
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ml2 type_drivers gre
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ml2 tenant_network_types gre
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ml2 mechanism_drivers openvswitch
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ml2_type_gre tunnel_id_ranges 1:1000
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ovs local_ip 10.0.1.21
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ovs tunnel_type gre
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ovs enable_tunneling True
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini securitygroup firewall_driver neutron.agent.linux.iptables_firewall.OVSHybridIptablesFirewallDriver
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini securitygroup enable_security_group True
+
+
+service openvswitch start
+chkconfig openvswitch on
+
+
+ovs-vsctl add-br br-int
+
+ovs-vsctl add-br br-ex
+
+ovs-vsctl add-port br-ex eth0
+
+ethtool -K eth2 gro off --disalbe external
+
+
+
+
+
+ln -s plugins/ml2/ml2_conf.ini /etc/neutron/plugin.ini
+
+cp /etc/init.d/neutron-openvswitch-agent /etc/init.d/neutronopenvswitch-agent.orig
+sed -i 's,plugins/openvswitch/ovs_neutron_plugin.ini,plugin.ini,g' /etc/init.d/neutron-openvswitch-agent
+
+
+service neutron-openvswitch-agent start
+service neutron-l3-agent start
+service neutron-dhcp-agent start
+service neutron-metadata-agent start
+chkconfig neutron-openvswitch-agent on
+chkconfig neutron-l3-agent on
+chkconfig neutron-dhcp-agent on
+chkconfig neutron-metadata-agent on
+
+
+service neutron-openvswitch-agent restart
+service neutron-l3-agent restart
+service neutron-dhcp-agent restart
+service neutron-metadata-agent restart
+
+
+service neutron-openvswitch-agent stop
+service neutron-l3-agent stop
+service neutron-dhcp-agent stop
+service neutron-metadata-agent stop
+
+
+service neutron-openvswitch-agent start
+service neutron-l3-agent start
+service neutron-dhcp-agent start
+service neutron-metadata-agent start
+
+----------------
+Compute-node
+
+
+yum install openstack-neutron-ml2 openstack-neutron-openvswitch
+
+
+openstack-config --set /etc/neutron/neutron.conf DEFAULT auth_strategy keystone
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken auth_uri http://controller:5000
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken auth_host controller
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken auth_protocol http
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken auth_port 35357
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken admin_tenant_name service
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken admin_user neutron
+openstack-config --set /etc/neutron/neutron.conf keystone_authtoken admin_password rac123
+
+
+openstack-config --set /etc/neutron/neutron.conf DEFAULT rpc_backend neutron.openstack.common.rpc.impl_kombu
+openstack-config --set /etc/neutron/neutron.conf DEFAULT rabbit_host controller
+
+
+openstack-config --set /etc/neutron/neutron.conf DEFAULT core_plugin ml2
+openstack-config --set /etc/neutron/neutron.conf DEFAULT service_plugins router
+
+
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ml2 type_drivers gre
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ml2 tenant_network_types gre
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ml2 mechanism_drivers openvswitch
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ml2_type_gre tunnel_id_ranges 1:1000
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ovs local_ip 10.0.1.31
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ovs tunnel_type gre
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini ovs enable_tunneling True
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini securitygroup firewall_driver neutron.agent.linux.iptables_firewall.OVSHybridIptablesFirewallDriver
+openstack-config --set /etc/neutron/plugins/ml2/ml2_conf.ini securitygroup enable_security_group True
+
+
+service openvswitch start
+chkconfig openvswitch on
+
+service openvswitch restart
+
+ovs-vsctl add-br br-int
+
+
+
+openstack-config --set /etc/nova/nova.conf DEFAULT network_api_class nova.network.neutronv2.api.API
+openstack-config --set /etc/nova/nova.conf DEFAULT neutron_url http://controller:9696
+openstack-config --set /etc/nova/nova.conf DEFAULT neutron_auth_strategy keystone
+openstack-config --set /etc/nova/nova.conf DEFAULT neutron_admin_tenant_name service
+openstack-config --set /etc/nova/nova.conf DEFAULT neutron_admin_username neutron
+openstack-config --set /etc/nova/nova.conf DEFAULT neutron_admin_password rac123
+openstack-config --set /etc/nova/nova.conf DEFAULT neutron_admin_auth_url http://controller:35357/v2.0
+openstack-config --set /etc/nova/nova.conf DEFAULT linuxnet_interface_driver nova.network.linux_net.LinuxOVSInterfaceDriver
+openstack-config --set /etc/nova/nova.conf DEFAULT firewall_driver nova.virt.firewall.NoopFirewallDriver
+openstack-config --set /etc/nova/nova.conf DEFAULT security_group_api neutron
+
+
+ln -s plugins/ml2/ml2_conf.ini /etc/neutron/plugin.ini
+
+
+cp /etc/init.d/neutron-openvswitch-agent /etc/init.d/neutronopenvswitch-agent.orig
+sed -i 's,plugins/openvswitch/ovs_neutron_plugin.ini,plugin.ini,g' /etc/init.d/neutron-openvswitch-agent
+
+
+service openstack-nova-compute restart
+
+
+
+service neutron-openvswitch-agent start
+chkconfig neutron-openvswitch-agent on
+
+
+
+---------- Create Initail Networks
+
+
+neutron net-create ext-net --shared --router:external=True
+
+
+
+neutron subnet-create ext-net --name ext-subnet \
+--allocation-pool start=FLOATING_IP_START,end=FLOATING_IP_END \
+--disable-dhcp --gateway EXTERNAL_NETWORK_GATEWAY EXTERNAL_NETWORK_CIDR
+
+
+
+neutron subnet-create ext-net --name ext-subnet \
+--allocation-pool start=10.0.2.50,end=10.0.2.100 \
+--disable-dhcp --gateway 10.0.2.2 10.0.2.2/24
+
+
+To create the tenant network
+1. Source the demo tenant credentials:
+source demo-openrc.sh
+
+
+neutron net-create demo-net
+
+neutron subnet-create demo-net --name demo-subnet \
+--dns-nameserver 8.8.8.8 --gateway 192.168.1.1 192.168.1.0/24
+
+
+
+neutron router-create demo-router
+
+
+neutron router-interface-add demo-router demo-subnet
+
+
+neutron router-gateway-set demo-router ext-net
+
+
+-------- Dashboard
+--------- Controll node
+
+yum install memcached python-memcached mod_wsgi openstack-dashboard -y 
+
+Open /etc/openstack-dashboard/local_settings and look for this line:
+CACHES = {
+'default': {
+'BACKEND' : 'django.core.cache.backends.memcached.MemcachedCache',
+'LOCATION' : '127.0.0.1:11211'
+}
+}
+
+
+Edit /etc/openstack-dashboard/local_settings:
+ALLOWED_HOSTS = ['localhost', 'my-desktop']
+
+
+Edit /etc/openstack-dashboard/local_settings and change
+OPENSTACK_HOST to the hostname of your Identity Service:
+OPENSTACK_HOST = "controller"
+
+setsebool -P httpd_can_network_connect on
+
+service httpd start
+service memcached start
+chkconfig httpd on
+chkconfig memcached on
+
+
+You can now access the dashboard at http://controller/dashboard .
+
+
+--- Cinder
+--- Controller
+yum install openstack-cinder -y 
+
+openstack-config --set /etc/cinder/cinder.conf database connection mysql://cinder:rac123@localhost/cinder
+
+
+mysql -u root -p
+CREATE DATABASE cinder;
+GRANT ALL PRIVILEGES ON cinder.* TO 'cinder'@'localhost' IDENTIFIED BY 'rac123';
+GRANT ALL PRIVILEGES ON cinder.* TO 'cinder'@'%' IDENTIFIED BY 'rac123';
+exit;
+
+su -s /bin/sh -c "cinder-manage db sync" cinder
+
+
+keystone user-create --name=cinder --pass=rac123 --email=cinder@controller
+keystone user-role-add --user=cinder --tenant=service --role=admin
+
+
+
+openstack-config --set /etc/cinder/cinder.conf DEFAULT auth_strategy keystone
+openstack-config --set /etc/cinder/cinder.conf keystone_authtoken auth_uri http://controller:5000
+openstack-config --set /etc/cinder/cinder.conf keystone_authtoken auth_host controller
+openstack-config --set /etc/cinder/cinder.conf keystone_authtoken auth_protocol http
+openstack-config --set /etc/cinder/cinder.conf keystone_authtoken auth_port 35357
+openstack-config --set /etc/cinder/cinder.conf keystone_authtoken admin_user cinder
+openstack-config --set /etc/cinder/cinder.conf keystone_authtoken admin_tenant_name service
+openstack-config --set /etc/cinder/cinder.conf keystone_authtoken admin_password rac123
+
+
+
+openstack-config --set /etc/cinder/cinder.conf DEFAULT rpc_backend rabbit
+openstack-config --set /etc/cinder/cinder.conf DEFAULT rabbit_host controller
+
+
+keystone service-create --name=cinder --type=volume --description="OpenStack Block Storage"
+keystone endpoint-create \
+--service-id=$(keystone service-list | awk '/ volume / {print $2}') \
+--publicurl=http://controller:8776/v1/%\(tenant_id\)s \
+--internalurl=http://controller:8776/v1/%\(tenant_id\)s \
+--adminurl=http://controller:8776/v1/%\(tenant_id\)s
+
+
+
+keystone service-create --name=cinderv2 --type=volumev2 --description="OpenStack Block Storage v2"
+keystone endpoint-create \
+--service-id=$(keystone service-list | awk '/ volumev2 / {print $2}') \
+--publicurl=http://controller:8776/v2/%\(tenant_id\)s \
+--internalurl=http://controller:8776/v2/%\(tenant_id\)s \
+--adminurl=http://controller:8776/v2/%\(tenant_id\)s
+
+
+
+
+service openstack-cinder-api restart
+service openstack-cinder-scheduler restart
+chkconfig openstack-cinder-api on
+chkconfig openstack-cinder-scheduler on
+
+-- Compute
+
+pvcreate /dev/sdb
+vgcreate cinder-volumes /dev/sdb
+
+3. Add a filter entry to the devices section in the /etc/lvm/lvm.conf file to keep
+LVM from scanning devices used by virtual machines:
+
+devices {
+...
+filter = [ "a/sda1/", "a/sdb/", "r/.*/"]
+...
+}
+
+
+yum install openstack-cinder scsi-target-utils -y 
+
+
+
+
+openstack-config --set /etc/cinder/cinder.conf DEFAULT auth_strategy keystone
+openstack-config --set /etc/cinder/cinder.conf keystone_authtoken auth_uri http://controller:5000
+openstack-config --set /etc/cinder/cinder.conf keystone_authtoken auth_host controller
+openstack-config --set /etc/cinder/cinder.conf keystone_authtoken auth_protocol http
+openstack-config --set /etc/cinder/cinder.conf keystone_authtoken auth_port 35357
+openstack-config --set /etc/cinder/cinder.conf keystone_authtoken admin_user cinder
+openstack-config --set /etc/cinder/cinder.conf keystone_authtoken admin_tenant_name service
+openstack-config --set /etc/cinder/cinder.conf keystone_authtoken admin_password rac123
+
+
+openstack-config --set /etc/cinder/cinder.conf DEFAULT rpc_backend rabbit
+openstack-config --set /etc/cinder/cinder.conf DEFAULT rabbit_host controller
+
+
+
+openstack-config --set /etc/cinder/cinder.conf database connection mysql://cinder:rac123@controller/cinder
+openstack-config --set /etc/cinder/cinder.conf DEFAULT my_ip 10.0.0.31
+openstack-config --set /etc/cinder/cinder.conf DEFAULT glance_host controller
+openstack-config --set /etc/cinder/cinder.conf DEFAULT iscsi_helper tgtadm
+
+Configure the iSCSI target service to discover Block Storage volumes. Add the following
+line to the beginning of the /etc/tgt/targets.conf file, if it is not already
+present:
+include /etc/cinder/volumes/*
+
+service openstack-cinder-volume start
+service tgtd start
+chkconfig openstack-cinder-volume on
+chkconfig tgtd on
+
+
+
+-- controller
+
+source demo_creds
+
+a1
+
+cinder list
+
+
+
+
+
+
+
+
+
+---------- Telemetry - Ceilometr
+
+yum install openstack-ceilometer-api openstack-ceilometer-collector openstack-ceilometer-notification openstack-ceilometer-central
+openstack-ceilometer-alarm python-ceilometerclient
+
+
+yum install mongodb-server mongodb
+
+If you need to minimize the space allocated to support database journaling
+then set the smallfiles configuration key to true in the /etc/
+mongodb.conf configuration file. This configuration reduces the size of
+each journaling file to 512 MB.
+
+Configure MongoDB to make it listen on the controller management IP address. Edit
+the /etc/mongodb.conf file and modify the bind_ip key:
+bind_ip = 10.0.0.11
+
+Start the MongoDB server and configure it to start when the system boots:
+service mongod start
+chkconfig mongod on
+
+
+Create the database and a ceilometer database user:
+
+mongo --host controller --eval '
+db = db.getSiblingDB("ceilometer");
+db.addUser({user: "ceilometer",
+pwd: "rac123",
+roles: [ "readWrite", "dbAdmin" ]})'
+
+
+Configure the Telemetry service to use the database:
+openstack-config --set /etc/ceilometer/ceilometer.conf database connection mongodb://ceilometer:rac123@controller:27017/ceilometer
+
+
+
+
+You must define a secret key that is used as a shared secret among Telemetry service
+nodes. Use openssl to generate a random token and store it in the configuration file:
+
+CEILOMETER_TOKEN=$(openssl rand -hex 10)
+echo $CEILOMETER_TOKEN
+openstack-config --set /etc/ceilometer/ceilometer.conf publisher metering_secret $CEILOMETER_TOKEN
+
+
+
+openstack-config --set /etc/ceilometer/ceilometer.conf DEFAULT rpc_backend ceilometer.openstack.common.rpc.impl_kombu
+
+
+keystone user-create --name=ceilometer --pass=rac123 --email=ceilometer@example.com
+keystone user-role-add --user=ceilometer --tenant=service --role=admin
+
+
+openstack-config --set /etc/ceilometer/ceilometer.conf DEFAULT auth_strategy keystone
+
+
+
+openstack-config --set /etc/ceilometer/ceilometer.conf keystone_authtoken auth_host controller
+openstack-config --set /etc/ceilometer/ceilometer.conf keystone_authtoken admin_user ceilometer
+openstack-config --set /etc/ceilometer/ceilometer.conf keystone_authtoken admin_tenant_name service
+openstack-config --set /etc/ceilometer/ceilometer.conf keystone_authtoken auth_protocol http
+openstack-config --set /etc/ceilometer/ceilometer.conf keystone_authtoken auth_uri http://controller:5000
+openstack-config --set /etc/ceilometer/ceilometer.conf keystone_authtoken admin_password rac123
+openstack-config --set /etc/ceilometer/ceilometer.conf service_credentials os_auth_url http://controller:5000/v2.0
+openstack-config --set /etc/ceilometer/ceilometer.conf service_credentials os_username ceilometer
+openstack-config --set /etc/ceilometer/ceilometer.conf service_credentials os_tenant_name service
+openstack-config --set /etc/ceilometer/ceilometer.conf service_credentials os_password rac123
+
+
+keystone service-create --name=ceilometer --type=metering --description="Telemetry"
+keystone endpoint-create \
+--service-id=$(keystone service-list | awk '/ metering / {print $2}') \
+--publicurl=http://controller:8777 \
+--internalurl=http://controller:8777 \
+--adminurl=http://controller:8777
+
+
+service openstack-ceilometer-api start
+service openstack-ceilometer-notification start
+service openstack-ceilometer-central start
+service openstack-ceilometer-collector start
+service openstack-ceilometer-alarm-evaluator start
+service openstack-ceilometer-alarm-notifier start
+chkconfig openstack-ceilometer-api on
+chkconfig openstack-ceilometer-notification on
+chkconfig openstack-ceilometer-central on
+chkconfig openstack-ceilometer-collector on
+chkconfig openstack-ceilometer-alarm-evaluator on
+chkconfig openstack-ceilometer-alarm-notifier on
+
+
+
+service openstack-ceilometer-api restart
+service openstack-ceilometer-notification restart
+service openstack-ceilometer-central restart
+service openstack-ceilometer-collector restart
+service openstack-ceilometer-alarm-evaluator restart
+service openstack-ceilometer-alarm-notifier restart
+
+-- compute
+
+yum install openstack-ceilometer-compute python-ceilometerclient pythonpecan
+
+
+openstack-config --set /etc/nova/nova.conf DEFAULT instance_usage_audit True
+openstack-config --set /etc/nova/nova.conf DEFAULT instance_usage_audit_period hour
+openstack-config --set /etc/nova/nova.conf DEFAULT notify_on_state_change vm_and_task_state
+
+
+Edit the /etc/nova/nova.conf file and add the following lines to the [DEFAULT]
+section:
+[DEFAULT]
+...
+notification_driver = nova.openstack.common.notifier.rpc_notifier
+notification_driver = ceilometer.compute.nova_notifier
+rpc_backend = rabbit
+
+
+
+service openstack-nova-compute restart
+
+openstack-config --set /etc/ceilometer/ceilometer.conf publisher metering_secret 569e9a01b529f053d05c
+
+
+openstack-config --set /etc/ceilometer/ceilometer.conf DEFAULT rpc_backend = neutron.openstack.common.rpc.impl_kombu
+openstack-config --set /etc/ceilometer/ceilometer.conf DEFAULT rabbit_host = controller
+
+
+
+openstack-config --set /etc/ceilometer/ceilometer.conf keystone_authtoken auth_host controller
+openstack-config --set /etc/ceilometer/ceilometer.conf keystone_authtoken admin_user ceilometer
+openstack-config --set /etc/ceilometer/ceilometer.conf keystone_authtoken admin_tenant_name service
+openstack-config --set /etc/ceilometer/ceilometer.conf keystone_authtoken auth_protocol http
+openstack-config --set /etc/ceilometer/ceilometer.conf keystone_authtoken admin_password rac123
+openstack-config --set /etc/ceilometer/ceilometer.conf service_credentials os_username ceilometer
+openstack-config --set /etc/ceilometer/ceilometer.conf service_credentials os_tenant_name service
+openstack-config --set /etc/ceilometer/ceilometer.conf service_credentials os_password rac123
+openstack-config --set /etc/ceilometer/ceilometer.conf service_credentials os_auth_url http://controller:5000/v2.0
+
+
+service openstack-ceilometer-compute start
+chkconfig openstack-ceilometer-compute on
+
+
+
+------- celemetry - cinder
+-- controll
+openstack-config --set /etc/cinder/cinder.conf DEFAULT control_exchange cinder
+openstack-config --set /etc/cinder/cinder.conf DEFAULT notification_driver cinder.openstack.common.notifier.rpc_notifier
+
+
+service openstack-cinder-api restart
+service openstack-cinder-scheduler restart
+
+-- compute
+# service openstack-cinder-volume restart
+
+--- glance
+
+keystone role-create --name=ResellerAdmin
+
+keystone user-role-add --tenant service --user ceilometer \
+--role 462fa46c13fd4798a95a3bfbe27b5e54
+
+
+
+GRANT ALL PRIVILEGES ON *.* TO cinder@'%' IDENTIFIED BY 'rac123';
+
+
+
+
+
+
+volume 112f23d9-98cc-4b77-993a-6b30e5b5f38a: skipping export
+2015-07-08 05:46:03.117 22471 INFO cinder.volume.manager [req-218c3ac3-77a7-4d3a-85ff-992b3aff0fe1 - - - - -] volume 6d1587ce-f84e-4afc-8258-74b7a6df29e8: skipping export
+2015-07-08 05:46:03.118 22471 INFO cinder.volume.manager [req-218c3ac3-77a7-4d3a-85ff-992b3aff0fe1 - - - - -] volume c5fa4147-a68b-41df-a337-925daa30faf5: skipping export
+
+
+--------------------------------------+
+| 112f23d9-98cc-4b77-993a-6b30e5b5f38a |
+| 6d1587ce-f84e-4afc-8258-74b7a6df29e8 |
+| c5fa4147-a68b-41df-a337-925daa30faf5 |
+
+
+
+
+
+
+# nova boot --flavor centos --nic net-id=66859659-ddbb-43ba-9486-47d44529ede0 --block-device id=c41bfd82-4705-4f93-8d09-9907901aa83d,source=volume,dest=volume,bus=ide,device=/dev/vdb,size=5,type=cdrom,bootindex=1 --block-device source=volume,id=c4a48716-ee22-4939-898b-03e0ff3a2c65,dest=volume,device=/dev/vda,size=17,bootindex=0  test2 --user-data rhel65
+
+
+
+secgroup-add-group-rule
+                        Add a source group rule to a security group.
+    secgroup-add-rule   Add a rule to a security group.
+    secgroup-create     Create a security group.
+    secgroup-delete     Delete a security group.
+    secgroup-delete-group-rule
+                        Delete a source group rule from a security group.
+    secgroup-delete-rule
+                        Delete a rule from a security group.
+    secgroup-list       List security groups for the current tenant.
+    secgroup-list-rules
+                        List rules for a security group.
+    secgroup-update     Update a security group.
+    server-group-create
+                        Create a new server group with the specified details.
+    server-group-delete
+
+
+
+00:0C:29:B4:DE:81
+00:0C:29:B4:DE:8B
