@@ -1,0 +1,4 @@
+export HISTTIMEFORMAT="%d/%m/%y %T "
+export HISTFILESIZE=
+export HISTSIZE=
+PROMPT_COMMAND="history -a; $PROMPT_COMMAND"
