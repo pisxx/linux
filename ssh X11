@@ -16,5 +16,5 @@ localhost:12.0
 xauth:  creating new authority file /home/oracle/.Xauthority
 
 
-[xxx@server1 garth]$ xcalc
+[xxx@server1 xxx]$ xcalc
 
