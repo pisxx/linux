@@ -1,0 +1,20 @@
+First rember to do ssh -X
+
+[xxx@server1 ~]$ echo $DISPLAY
+localhost:12.0
+
+Fetch the magic cookie entry relevant to your local display:
+
+[xxx@server1 ~]$ echo xauth add `xauth list ${DISPLAY#localhost}`
+xauth add server1.localdomain/unix:12 MIT-MAGIC-COOKIE-1 2928a6e16b7d6d57041dcee632764b72
+
+
+[xxxh@server1 ~]$ sudo su - oracle
+[xxx@server1 xxx]$ echo $DISPLAY
+localhost:12.0
+[xxx@server1 xxx]$ xauth add server1.localdomain/unix:12 MIT-MAGIC-COOKIE-1 2928a6e16b7d6d57041dcee632764b72
+xauth:  creating new authority file /home/oracle/.Xauthority
+
+
+[xxx@server1 garth]$ xcalc
+
